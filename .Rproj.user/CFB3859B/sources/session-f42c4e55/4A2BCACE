@@ -1,0 +1,32 @@
+{
+    "id": "4A2BCACE",
+    "path": "~/MEEL Dropbox/Qinyang Li/QinyangLi/PhD/LakeData_tidy/R_scripts/lake_data_analysis.qmd",
+    "project_path": "R_scripts/lake_data_analysis.qmd",
+    "type": "quarto_markdown",
+    "hash": "1450143850",
+    "contents": "",
+    "dirty": false,
+    "created": 1726565959477.0,
+    "source_on_save": false,
+    "relative_order": 2,
+    "properties": {
+        "rmdVisualMode": "true",
+        "rmdVisualWrapConfigured": "true",
+        "tempName": "Untitled1",
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "33,0",
+        "scrollLine": "0",
+        "docOutlineVisible": "1",
+        "rmdVisualCollapsedChunks": "",
+        "rmdVisualModeLocation": "1990:783"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1726575287,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1726575287894,
+    "read_only": false,
+    "read_only_alternatives": []
+}

@@ -1,0 +1,28 @@
+{
+    "id": "E67B42C9",
+    "path": "~/MEEL Dropbox/Qinyang Li/QinyangLi/PhD/LakeData_tidy/R_scripts/lake_data_construction.R",
+    "project_path": "R_scripts/lake_data_construction.R",
+    "type": "r_source",
+    "hash": "1245715574",
+    "contents": "",
+    "dirty": false,
+    "created": 1717764763060.0,
+    "source_on_save": false,
+    "relative_order": 6,
+    "properties": {
+        "tempName": "Untitled1",
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "551,33",
+        "scrollLine": "531",
+        "docOutlineVisible": "1"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1720084580,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1720084580752,
+    "read_only": false,
+    "read_only_alternatives": []
+}

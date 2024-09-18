@@ -1,0 +1,27 @@
+{
+    "id": "3E65C583",
+    "path": "~/MEEL Dropbox/Qinyang Li/QinyangLi/PhD/LakeData_tidy/archived/Lake_data_workflow_v2.Rmd",
+    "project_path": "archived/Lake_data_workflow_v2.Rmd",
+    "type": "r_markdown",
+    "hash": "3723955004",
+    "contents": "",
+    "dirty": false,
+    "created": 1720691965252.0,
+    "source_on_save": false,
+    "relative_order": 2,
+    "properties": {
+        "chunk_output_type": "inline",
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "33,0",
+        "scrollLine": "0"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1671463085,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1671463085,
+    "read_only": false,
+    "read_only_alternatives": []
+}

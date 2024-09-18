@@ -1,0 +1,621 @@
+#************************************************************************
+# R code for compiling lake database including physiochemical, algae and algal phenotype datasets ---- 
+# Original code by Teodor Alling modified by Qinyang Li, edited by Charlie Cornwallis
+#************************************************************************
+
+#************************************************************************
+#Packages ----
+#************************************************************************
+pacman::p_load(dplyr,doBy,tidyr,ggplot2,stringr,readxl,plyr)
+
+#************************************************************************
+#1. Input data ----
+#************************************************************************
+
+#** Physiochemical data ----
+# reading from excel files
+# manually set col_types = "text" to make sure all variables are characters to begin with. 
+c1_exl <- read_excel('data/input/chem2_1941-1961_(1946).xlsx', sheet = 2, col_names = TRUE)
+c2_exl <- read_excel('data/input/chem2_1962-1984.xlsx', sheet = 2, col_names = TRUE)
+c3_exl <- read_excel('data/input/chem2_1985-1999.xlsx', sheet = 2, col_names = TRUE)
+c4_exl <- read_excel('data/input/chem2_2000-2010.xlsx', sheet = 2, col_names = TRUE)
+c5_exl <- read_excel('data/input/chem2_2011-2019.xlsx', sheet = 2, col_names = TRUE)
+c6_exl <- read_excel('data/input/chem2_2019-2024.xlsx', sheet = 2, col_names = TRUE)
+
+# remove duplicated columns in c5
+c5_exl = c5_exl %>% 
+  mutate(`Kfyll (µg/l)`=`Kfyll (µg/l)...98`) %>% 
+  select(-c(`Kfyll (µg/l)...98`,`Kfyll (µg/l)...99`)) 
+
+#rename "Övervakningsstation" in c6 to "Stationsnamn" same as c1-5
+c6_exl = c6_exl %>% dplyr::rename("Stationsnamn"="Övervakningsstation") # specify dplyr:: to avoid conflict
+
+#remove additional variables in c6
+c5_colnames = c5_exl %>% select(Stationsnamn:Provkommentar) %>% colnames()
+c6_colnames = c6_exl %>% select(Stationsnamn:Provkommentar) %>% colnames()
+colnames_to_remove <- c6_colnames[!c6_colnames %in% c5_colnames]
+
+c6_exl = c6_exl %>% 
+  dplyr::select(-(all_of(colnames_to_remove)))
+
+#** Chlorophyta data ----
+cl1_exl <- read_excel('data/input/chloro2_1941-1957.xlsx', sheet = 2, col_names = TRUE)
+cl2_exl <- read_excel('data/input/chloro2_1958-1988.xlsx', sheet = 2, col_names = TRUE)
+cl3_exl <- read_excel('data/input/chloro2_1989-2019.xlsx', sheet = 2, col_names = TRUE)
+cl4_exl <- read_excel('data/input/chloro2_2019-2023.xlsx', sheet = 2, col_names = TRUE)
+
+# rename cl4_exl first column to "stationsnamn" 
+cl4_exl = cl4_exl %>% dplyr::rename("Stationsnamn"="Övervakningsstation")
+
+#remove additional variables in cl4_exl
+cl3_colnames = cl3_exl %>% colnames()
+cl4_colnames = cl4_exl %>% colnames()
+colnames_to_remove <- cl4_colnames[!cl4_colnames %in% cl3_colnames]
+cl4_exl = cl4_exl %>% 
+  dplyr::select(-(all_of(colnames_to_remove)))
+
+#** Algae phenotypes ----
+algaepheno <- readxl::read_excel("data/input/SpeciesPhenotype.xlsx")
+View(algaepheno)
+#************************************************************************
+#2. Physiochemical data compilation ----
+#************************************************************************
+chem=rbind.fill(c1_exl,c2_exl,c3_exl,c4_exl,c5_exl,c6_exl) 
+dim(chem) # 324509 231
+
+# remove variables with only NAs
+na_variables <- names(chem)[colSums(is.na(chem)) == nrow(chem)]
+chem = chem %>% dplyr::select(-na_variables)
+dim(chem) # 324509 112
+
+# remove spaces and parenthesis aka round brackets in colnames
+colnames(chem)=make.names(colnames(chem))
+
+# replace ".." to "." in colnames
+colnames(chem)= gsub("\\.\\.", ".", colnames(chem))
+# colnames(chem)
+
+# sort the physiochemical variables alphabetically
+# convert numerical variables into class numeric by:
+# first remove all special symbols such as "><[]", 
+# then change "," decimals to ".", 
+# then coerce to numeric
+chem_dat = chem %>% 
+  select(Alk.Acid.mekv.l.:SO4_IC.mg.l.SO4.) %>% 
+  select(sort(colnames(.))) %>% 
+  bind_cols(chem %>% select(Stationsnamn:Provkommentar)) %>% 
+  relocate(c(Stationsnamn:Provkommentar), .before = Abs_F.254..5cm.) %>% 
+  distinct() %>% 
+  mutate_at(vars(c(Abs_F.254..5cm.:Zn.µg.l.)), ~ gsub("[^[:alnum:],]", "",.)) %>% # change all characters that are not alphanumeric, a comma, or a period with an empty string in the specified column.
+  mutate_at(vars(c(Abs_F.254..5cm.:Zn.µg.l.)), ~ as.numeric(gsub(",", ".",.))) 
+
+# Merging redundant variables into just one variable
+# merge_fun: function for coalesce or average various values 
+# Rules: if either x or y has value, choose the one with value, if both have values, average
+merge_fun = function(x, y) {
+  if_else(
+    is.na(x) & !is.na(y), y,
+    if_else(
+      !is.na(x) & is.na(y), x,
+      if_else(
+        !is.na(x) & !is.na(y), (x + y) / 2, NA_real_)))
+}
+
+# test if the function wrap works
+# dat1 = chem_dat%>% 
+#   mutate(Tot.N_TNb.µg.l. = coalesce(Tot.N_TNb.µg.l., Tot.N_TNb.µg.l.N.),
+#          Tot.N = if_else(
+#            is.na(Tot.N_ps.µg.l.) & !is.na(Tot.N_TNb.µg.l.), Tot.N_TNb.µg.l.,
+#            if_else(
+#              !is.na(Tot.N_ps.µg.l.) & is.na(Tot.N_TNb.µg.l.), Tot.N_ps.µg.l.,
+#              if_else(
+#                !is.na(Tot.N_ps.µg.l.) & !is.na(Tot.N_TNb.µg.l.), (Tot.N_ps.µg.l. + Tot.N_TNb.µg.l.) / 2, NA_real_))),
+#          Tot.P = coalesce(Tot.P.µg.l.,Tot.P.µg.l.P.)) %>% 
+#   select(Tot.P)
+# 
+# dat2 = chem_dat %>% 
+#   mutate(Tot.P = merge_fun(Tot.P.µg.l., Tot.P.µg.l.P.)) %>% 
+#   select(Tot.P)
+# 
+# identical(dat2,dat1) # TRUE, the function wrap works
+
+#**************************************
+#** Process every variables #### 
+# Apply merge_fun to all the same variables with multiple names:
+phys_chem = chem_dat %>% 
+  mutate(station = Stationsnamn,
+         id = MD.MVM.Id,
+         EUid = EU.id,
+         stationcoordN = Stationskoordinat.N.X,
+         stationcoordE = Stationskoordinat.E.Y,
+         coordN = ifelse(is.na(Provplatskoordinat.N.X),stationcoordN,Provplatskoordinat.N.X), #if coordinates are missing then replace with stations coordinates
+         coordE = ifelse(is.na(Provplatskoordinat.E.Y),stationcoordE,Provplatskoordinat.E.Y), #if coordinates are missing then replace with stations coordinates
+         coordsys = Koordinatsystem,
+         test_medium = Provtagningsmedium,    
+         program = Program,               
+         delprogram = Delprogram,            
+         project = Projekt,            
+         region = Län,
+         kommun = Kommun,
+         mscdc2 = MS_CD.C2,
+         mscdc3 = MS_CD.C3,               
+         testid = ProvId,
+         date = as.character(as.Date(Provdatum, "%d/%m/%Y")),             
+         year = Provtagningsår,
+         month = Provtagningsmånad,
+         day = Provtagningsdag,
+         chem_mindepth = as.numeric(gsub(",", ".",Min.provdjup.m.)),
+         chem_maxdepth = as.numeric(gsub(",", ".",Max.provdjup.m.)),        
+         study_type = Undersökningstyp,     
+         comments = Provkommentar,
+         abs254 = Abs_F.254..5cm.,
+         abs365 = Abs_F.365..5cm.,
+         abs420 = Abs_F.420..5cm.,        
+         abs436 = Abs_F.436..5cm.,
+         absOF420 = Abs_OF.420..5cm.,
+         Al_ICPAES_ug.l = Al_ICPAES.µg.l.,
+         Al_ICPKJB_ug.l. = Al_ICPKJB.µg.l.,
+         Al_acid_soluble = Al_NA.µg.l.,
+         Al_monomeric = Al_NAD.µg.l.,
+         Al_total_acid_soluble = Al_s.µg.l.,
+         Al_ug.l = Al.µg.l.,
+         Al_inorganic_labile_monomeric = AlI_NAJ.µg.l.,
+         Al_organic_stable_monomeric =AlO_NAJ.µg.l.,
+         alk_acid_mekv = Alk.Acid.mekv.l.,
+         As_ug.l = merge_fun(As_F.µg.l., As.µg.l.),        # merge filtered with non-filtered since they highly correlate
+         Ca_mekv = ifelse(is.na(chem_dat$Ca.mekv.l.),chem_dat$Ca.mg.l./20.039,chem_dat$Ca.mekv.l.),
+         Cd_ug.l = merge_fun(Cd.µg.l.,Cd_F.µg.l.),        
+         Cl_mekv = ifelse(is.na(chem_dat$Cl.mekv.l.),chem_dat$Cl.mg.l./35.4,chem_dat$Cl.mekv.l.),
+         Co_ug.l = merge_fun(Co.µg.l.,Co_F.µg.l.),
+         chemical_O2_consumption_COD_mg.l = CODMn.mg.l.,
+         chemical_O2_consumption_KMnO4_mg.l = KMnO4.mg.l., # chemical oxygen consumption (Permanganate method)
+         Cr_ug.l = merge_fun(Cr.µg.l.,Cr_F.µg.l.),
+         Cu_ug.l = merge_fun(Cu.µg.l.,Cu_F.µg.l.),
+         doc = DOC.mg.l.C.,
+         colour_mg.Pt.l = Färgtal.mg.Pt.l.,
+         F_mg.l = F.mg.l.,
+         Fe_ug.l = Fe.µg.l.,
+         K_mekv = ifelse(is.na(chem_dat$K.mekv.l.),chem_dat$K.mg.l./39,chem_dat$K.mekv.l.),
+         chlorophyll_ug.l = ifelse(is.na(chem_dat$Kfyll.mg.m3.),chem_dat$Kfyll.µg.l.,chem_dat$Kfyll.mg.m3./0.000001),
+         N_Kjeld_ug.l = Kjeld.N.µg.l.,
+         conductivity20_us.cm = Kond_20.µS.cm.,
+         conductivity25_ms.m = Kond_25.mS.m.,
+         Mg_mekv = ifelse(is.na(chem_dat$Mg.mekv.l.),chem_dat$Mg.mg.l./12.15,chem_dat$Mg.mekv.l.),
+         Mn_ug.l = Mn.µg.l.,
+         Na_mekv = ifelse(is.na(chem_dat$Na.mekv.l.),chem_dat$Na.mg.l./23,chem_dat$Na.mekv.l.),
+         Nh4_ug.l = merge_fun(NH4.N.µg.l.,NH4.N.µg.l.N.),
+         Ni_ug.l = merge_fun(Ni_F.µg.l., Ni.µg.l.),
+         NO2_ug.l = NO2.N.µg.l.,
+         NO2NO3_ug.l = merge_fun(NO2.NO3.N.µg.l.,NO2.NO3.N.µg.l.N.),
+         OrgN_ug.l = Org.N.µg.l.,
+         Pb_ug.l = merge_fun(Pb_F.µg.l.,Pb.µg.l.),
+         PH = pH,
+         PO4_ug.l = merge_fun(PO4.P.µg.l.,PO4.P.µg.l.P.),
+         S_mg.l = S.mg.l.,
+         Si_mg.l = Si.mg.l.,
+         visible_depth_m=Siktdjup.m.,
+         visible_depth_with_goggle_m=Siktdjup.med.kikare.m.,
+         visible_depth_no_goggle_m=Siktdjup.utan.kikare.m.,
+         suspended_material = Slamhalt.mg.l.,
+         SO4_IC_mekv = ifelse(is.na(chem_dat$SO4_IC.mekv.l.),chem_dat$SO4_IC.mg.l.SO4./(96.06/2),chem_dat$SO4_IC.mekv.l.),
+         SO4_Mack_mekv = SO4_Mack..mekv.l.,
+         SO4_mekv = SO4.mekv.l.,
+         Sr_ug.l = Sr.µg.l.,
+         oxygen_content = merge_fun(Syrgashalt.mg.l.,Syrgashalt.mg.l.O2.),
+         toc = merge_fun(TOC.mg.l.,TOC.mg.l.C.),
+         Tot.N_TNb.µg.l. = coalesce(Tot.N_TNb.µg.l., Tot.N_TNb.µg.l.N.),
+         Tot.N_ps.ug.l = Tot.N_ps.µg.l.,
+         Tot.N = merge_fun(Tot.N_TNb.µg.l., Tot.N_ps.µg.l.),
+         Tot.P = merge_fun(Tot.P.µg.l., Tot.P.µg.l.P.),
+         turbidity = Turb_FNU.FNU.,
+         U_ug.l=U.µg.l.,
+         V_ug.l=merge_fun(V_F.µg.l.,V.µg.l.),
+         water_temp=Vattentemperatur..C.,
+         Zn_ug.l=merge_fun(Zn_F.µg.l.,Zn.µg.l.),
+         id_date = paste(id,coordN,coordE,year,month,day,sep="_"),# unique identifier:  MVMID + location (needed as multiple sampling site per lake per day) + year + month + day
+         id_yrmnth = paste(id,coordN,coordE,year,month,sep="_"),
+         lake_yrmnth = paste(id,year,month,sep="_"),
+         season="winter",
+         season=ifelse(month == 3 |month == 4|month == 5,"spring",season),
+         season=ifelse(month == 6 |month == 7|month == 8,"summer",season),
+         season=ifelse(month == 9 |month == 10|month == 11,"autumn",season),
+         season=ordered(season,levels=c("spring","summer","autumn","winter")),
+         id_yrseason = paste(id,coordN,coordE,year,season,sep="_"))  %>% 
+  dplyr::select(station:id_yrseason)
+dim(phys_chem) # 324509     93
+
+#check if id_date is unique
+phys_chem %>% group_by(id_date) %>% dplyr::summarise(n=n()) %>% filter(n>1) # no
+phys_chem %>% filter(id_date == "101_7282225_796227_1988_5_19") #no, because there are multiple sampling depth per sample
+
+# #there are missing values for study_type and coordinates for some rows even though they are filled out for others. Fixed this by reinputting:
+# tmp = phys_chem %>% group_by(id_date,coordN,coordE) %>% reframe(study_type=unique(na.omit(study_type)))#multiple measurements per day due to NAs. However, there maybe multiple sampling sites per lake so use na.omit
+# tmp %>% group_by(id_date) %>% dplyr::summarise(n=n()) %>% filter(n>1) #should return 0
+# tmp %>% filter(id_date == "118_2016_2_15")
+# tmp %>% filter(id_date == "1921_6373575_520331_2021_11_22")
+# 
+# #appear to be multiple "test_id", "delprogram" and "project" per day
+# tmp = phys_chem %>% 
+#   group_by(pick(id_date:lake_yrmnth,station:program,region:mscdc3, date:day)) %>% 
+#   dplyr::summarise(depth=mean(chem_mindepth,na.rm=T)) #use this to check for duplicates
+# tmp1 = tmp %>% group_by(id_date) %>% dplyr::summarise(n=n())
+# range(tmp1$n)
+#tmp1 %>% filter(n>1)
+#tmp %>% filter(id_date == "1955_6644274_530902_2019_4_29")) #shows that testid, study_type and coordinates have missing values. Remove testid and NAs in coordinate
+
+#************************************************************************
+#3. Chlorophyta data ----
+#************************************************************************
+chlo =rbind(cl1_exl,cl2_exl,cl3_exl,cl4_exl)
+# chlo = rbind(cl1_exl,cl2_exl,cl3_exl)
+dim(chlo) # 156471     41
+
+# remove variables with only NAs - no variable has only NAs
+na_variables <- names(chlo)[colSums(is.na(chlo)) == nrow(chlo)]
+dim(chlo) # 156471     41
+
+# remove spaces and parenthesis aka round brackets in colnames
+colnames(chlo)=make.names(colnames(chlo))
+
+# replace ".." to "." in colnames
+colnames(chlo)= gsub("\\.\\.", ".", colnames(chlo))
+colnames(chlo)
+# test if converting cell density and biovolume to numeric variable works: 
+# # first remove "<" , then change "," to ".", then as.numeric 
+# dat = chlo %>% 
+#   mutate(biov =  ~ as.numeric(gsub(",", ".", gsub("[^[:alnum:],]", "",Biovolym.mm3.l.))),
+#          celld =  ~ as.numeric(gsub(",", ".", gsub("[^[:alnum:],]", "",Täthet.celler.l.))))
+
+# # looks good for both cell density and biovolume variables 
+# View(data.frame(dat$Biovolym.mm3.l.,chlo$Biovolym.mm3.l.))
+# View(data.frame(dat$Täthet.celler.l.,chlo$Täthet.celler.l.))
+
+# process each variables
+chlo = chlo %>%
+  mutate(
+    station = Stationsnamn,
+    id = MD.MVM.Id,
+    EUid = EU.id,
+    stationcoordN = Stationskoordinat.N.X,
+    stationcoordE = Stationskoordinat.E.Y,
+    coordN = ifelse(is.na(Provplatskoordinat.N.X),stationcoordN,Provplatskoordinat.N.X), #if coordinates are missing then replace with stations coordinates
+    coordE = ifelse(is.na(Provplatskoordinat.E.Y),stationcoordE,Provplatskoordinat.E.Y),
+    coordsys = Koordinatsystem,
+    test_medium = Provtagningsmedium,    
+    program = Program,               
+    delprgram = Delprogram,            
+    project = Projekt,            
+    region = Län,
+    kommun = Kommun,
+    mscdc2 = MS_CD.C2,
+    mscdc3 = MS_CD.C3,               
+    testid = ProvId,
+    date = as.character(as.Date(Provdatum, "%d/%m/%Y")),             
+    year = Provtagningsår,
+    month = Provtagningsmånad,
+    day = Provtagningsdag,
+    mindepth = as.numeric(gsub(",", ".",Min.provdjup.m.)),
+    maxdepth = as.numeric(gsub(",", ".",Max.provdjup.m.)),  
+    study_type = Undersökningstyp, 
+    chlorotest_method=Metodstandard.för.biologisk.provtagning,
+    chloro_comments = Provkommentar,
+    chloro_quality=Kvalitetsflagga,
+    chlorosampling_equipment=Provtagningsutrustning,                 
+    taxonid=TaxonId,
+    taxon=gsub(" ","_",Taxonnamn),                              
+    species_flag=Artflagga,
+    taxon_comments=Taxonkommentar,
+    size_min_um = as.numeric(gsub(",", ".",Minstorlek.µm.)),
+    size_max_um = as.numeric(gsub(",", ".",Maxstorlek.µm.)),  
+    cell_density_l=as.numeric(gsub(",", ".", gsub("[^[:alnum:],]", "",Täthet.celler.l.))), # first remove "<", then convert "," to ".", then coerce to numeric
+    bioviol_mm3.l=as.numeric(gsub(",", ".", gsub("[^[:alnum:],]", "",Biovolym.mm3.l.))),                       
+    species_group=Artgrupp,                              
+    chloroanalysis_method=Analysmetod,                           
+    chloroanalysis_comment=Analyskommentar,                        
+    chloroanalysis_lab=Analyslaboratorium,                   
+    chloroaccreditation=Ackreditering,
+    id_date = paste(id,coordN,coordE,year,month,day,sep="_"),# unique identifier:  MVMID + location (needed as multiple sampling site per lake per day) + year + month + day
+    id_yrmnth = paste(id,coordN,coordE,year,month,sep="_"),
+    lake_yrmnth = paste(id,year,month,sep="_")) %>%
+  dplyr::select(station:lake_yrmnth)
+
+###
+#check if id_date is unique
+chlo %>% group_by(id_date) %>% dplyr::summarise(n=n()) %>% filter(n>1)
+tmp=chlo %>% filter(id_date == "100_6547596_315227_2018_8_23")#makes sense as there are multiple taxa per sample
+
+
+#appear to be multiple "test_id", "delprogram" and "project" per day, also remove "chlorotest_method","chloro_comments","chloro_quality","chlorosampling_equipment","chloro_analysis_method:chloro_accreditation" as not consistent: dplyr::summarise data
+tmp = chlo %>% group_by(pick(id_date,station:mscdc3, date:day)) %>% dplyr::summarise(biovol=mean(bioviol_mm3.l,na.rm=T))#use this to check for duplicates
+
+# View(tmp)
+tmp1 = tmp %>% group_by(id_date) %>% dplyr::summarise(n=n())
+range(tmp1$n)
+tmp1 %>% filter(n>1)
+
+tm = chlo %>% 
+  group_by(id_date) %>% 
+  #group_by(pick(id_date:lake_yrmnth,station:program,region:mscdc3, date:day,taxonid:taxon)) %>% 
+  dplyr::summarise(mindepth = median(mindepth,na.rm=T))
+
+chlo = chlo %>% 
+  group_by(pick(id_date:lake_yrmnth,station:program,region:mscdc3, date:day,taxonid:taxon)) %>% 
+  dplyr::summarise(across(c(mindepth,maxdepth,size_min_um:bioviol_mm3.l), 
+                          .fns = ~median(.x,na.rm=T), #take medians for any repeated measures per id_date
+                          .names = "{col}")) %>%
+  ungroup()
+
+chlo = chlo %>% mutate(season="winter",
+                       season=ifelse(month == 3 |month == 4|month == 5,"spring",season),
+                       season=ifelse(month == 6 |month == 7|month == 8,"summer",season),
+                       season=ifelse(month == 9 |month == 10|month == 11,"autumn",season),
+                       season=ordered(season,levels=c("spring","summer","autumn","winter")),
+                       id_yrseason = paste(id,coordN,coordE,year,season,sep="_"))
+
+# tmp = chlo %>% group_by(pick(id_date,station:mscdc3, date:day)) %>% dplyr::summarise(biovol=mean(bioviol_mm3.l,na.rm=T))#use this to check for duplicates
+# tmp1 = tmp %>% group_by(id_date) %>% dplyr::summarise(n=n())
+# range(tmp1$n)
+# tmp1 %>% filter(n>1)
+# View(tmp %>% filter(id_date =="355_2020_8_19"))
+
+#************************************************************************
+#4. Merge Chem & Chlorophyta data ----
+#************************************************************************
+# since chemistry and chlorophyta not sampled necessarily on the same day, if we do a full merge, lakes with both chemistry
+# and phytoplankton data but not done in the same day will be deleted (e.g. Erken)
+#* StationcoordN and StationcoordE differ in two observations, remove them in group_by(pick())
+#* takes a minute to run the code...
+
+#**************************************
+##*option 1: join by id_date ---- 
+###**summarise dataset by id_date ----
+# chem_id_date = phys_chem %>% 
+#   group_by(pick(id_date:id_yrseason,station:EUid, coordN:program,region:mscdc3,date:day)) %>% 
+#   dplyr::summarise(across(c(chem_mindepth,chem_maxdepth,abs254:Zn_ug.l), 
+#                           .fns = ~median(.x,na.rm=T), #take medians for any repeated measures per id_date
+#                           .names = "{col}")) %>%
+#   ungroup()
+# 
+# chloro_chem = left_join(chlo, chem_id_date %>% dplyr::select(id_date,chem_mindepth:Zn_ug.l), by = "id_date")
+# dim(chloro_chem) # 156471 111
+# 
+# # % chloro and chem intersect = 65.8%
+# length(intersect(chlo$id_date, chem_id_date$id_date)) # 11454
+# length(unique(chlo$id_date)) # 17412
+# # 
+# # 11454/17412=0.6578222
+
+# save(chloro_chem, file = "data/output/chloro_chem_temp.RData")
+
+#**************************************
+##*option 2: join by id_yrmnth ----
+###**summarise dataset by id_yrmnth ----
+chem_mnth = phys_chem %>% 
+  group_by(pick(id_yrmnth:lake_yrmnth,station:EUid, coordN:program,region:mscdc3, year:month)) %>% 
+  dplyr::summarise(across(c(chem_mindepth,chem_maxdepth,abs254:Zn_ug.l),
+                          .fns = ~median(.x,na.rm=T), #take medians for any repeated measures per id_date_mnth
+                          .names = "{col}")) %>%
+  ungroup()
+
+# id_yrmnth unique?  
+tmp=chem_mnth %>% group_by(id_yrmnth) %>% dplyr::summarise(n=n())
+range(tmp$n) 
+
+chl_mnth = chlo %>% group_by(pick(id_yrmnth:lake_yrmnth,station:program,region:mscdc3, year:month,taxonid:taxon)) %>% 
+  dplyr::summarise(across(c(mindepth,maxdepth,size_min_um:bioviol_mm3.l), .fns = ~median(.x,na.rm=T), #take medians for any repeated measures per id_date_mnth
+                          .names = "{col}")) %>% 
+  ungroup()
+
+tmp=chl_mnth %>% group_by(id_yrmnth,taxon) %>% dplyr::summarise(n=n())
+range(tmp$n)
+
+# merge chloro with chem
+chloro_chem_mnth = left_join(chl_mnth, chem_mnth %>% dplyr::select(id_yrmnth,chem_mindepth:Zn_ug.l), by = "id_yrmnth")
+dim(chloro_chem_mnth)
+dim(chl_mnth)
+dim(chem_mnth)
+
+# % chloro and chem intersect = 70%
+# length(intersect(chem_mnth$id_yrmnth, chl_mnth$id_yrmnth)) # 12204
+# length(unique(chl_mnth$id_yrmnth)) # 17092
+# 12204/17092= 0.699808  71%
+
+#**************************************
+##*option 3: join by id_yrseason ----
+###**summarise dataset by id_yrseason ----
+# chem_season = phys_chem %>% 
+#   group_by(pick(id_yrseason,year,season,station:EUid, coordN:program,region:mscdc3)) %>% 
+#   dplyr::summarise(across(c(chem_mindepth,chem_maxdepth,abs254:Zn_ug.l),.fns = ~median(.x,na.rm=T), #take medians for any repeated measures per id_date_mnth
+#                           .names = "{col}")) %>% 
+#   ungroup()
+# 
+# # id_yrseason unique?  
+# tmp=chem_season %>% group_by(id_yrseason) %>% dplyr::summarise(n=n())
+# range(tmp$n) # 1 1 yes
+# 
+# chl_season = chlo %>% group_by(pick(id_yrseason,year,season,station:program,region:mscdc3, taxonid:taxon)) %>% 
+#   dplyr::summarise(across(c(mindepth,maxdepth,size_min_um:bioviol_mm3.l), .fns = ~median(.x,na.rm=T), #take medians for any repeated measures per id_date_mnth
+#                           .names = "{col}")) %>% ungroup()
+# 
+# dim(chl_season) # 97412    25
+# chloro_chem_season = left_join(chl_season, chem_season %>% dplyr::select(id_yrseason,chem_mindepth:Zn_ug.l), by = "id_yrseason")
+# 
+# # % chloro and chem intersect = 65%
+# length(intersect(chem_season$id_yrseason, chl_season$id_yrseason)) # 6922
+# length(unique(chl_season$id_yrseason)) # 10593
+# # 6922/10593= 0.6534504  65%
+
+# dim(chloro_chem) # 156471    109
+# dim(chloro_chem_mnth) # 114583     91
+# dim(chloro_chem_season) # 97412    90
+
+# Conclusion : pick chloro_chem_mnth for its highest % chloro chem intersect = 70%
+
+#************************************************************************
+#5. Merge algaepheno data ----
+#************************************************************************
+#Format
+algaepheno <- algaepheno %>% dplyr::rename(taxon = species)
+algaepheno %>% filter(multi == "multicellular")
+algaepheno <- algaepheno %>% mutate(genus=ifelse(genus == "Chlorolobion(Keratococcus)","Chlorolobion",genus),
+                                    genus=ifelse(genus== "Tetraëdron","Tetraedron",genus),
+                                    genus=ifelse(genus== "Ulotrichales","Ulothricales",genus),
+                                    prob_mucus=ifelse(mucilage == "y",1,0),
+                                    prob_multi=ifelse(multi == "multicellular",1,0)) %>%
+  dplyr::rename(mucus=mucilage)
+
+#Given species are difficult to identify and some taxa are missing species, check how much variation there is within genera
+genera<-algaepheno %>% filter(!is.na(mucus)) %>% group_by(genus) %>% dplyr::summarise(n=n())
+genera_mucus<-algaepheno %>% filter(!is.na(mucus)) %>% group_by(genus, mucus) %>% dplyr::summarise(n=n())
+dim(genera)
+dim(genera_mucus)# number genera with and without mucus = 2
+
+genera<-algaepheno %>% filter(!is.na(multi)) %>% group_by(genus) %>% dplyr::summarise(n=n())
+genera_multi<-algaepheno %>% filter(!is.na(multi)) %>% group_by(genus, multi) %>% dplyr::summarise(n=n())
+dim(genera)
+dim(genera_multi)# number genera with and without multicells = 3
+
+#Phenotypes per genus
+genus_pheno <- algaepheno %>% group_by(genus) %>%
+  dplyr::summarise(across(c(prob_mucus,prob_multi), 
+                          .fns = list(
+                            mean = ~mean(.,na.rm=T)),
+                          .names = "{col}"),
+                   nspecies=n()) %>% 
+  mutate(across(c(prob_mucus,prob_multi), 
+                .fns = ~ifelse(is.nan(.), NA, .)))
+
+genus_pheno$multi<-ifelse(genus_pheno$prob_multi>0.5,"multicellular","unicellular")
+genus_pheno$mucus<-ifelse(genus_pheno$prob_mucus>0.5,"y","n")
+
+# check species name differences between algaepheno and chloro_chem2
+setdiff(algaepheno$taxon, chloro_chem_mnth$taxon) # Tetradesmus_dimorphus
+
+#add in genus to chloro_chem
+algaepheno$taxon = gsub(" ","_",algaepheno$taxon)
+chloro_chem_mnth$taxon = gsub(" ","_",chloro_chem_mnth$taxon)
+
+#First try to create genus from matching taxon with algaephenotype data
+chloro_chem_mnth = chloro_chem_mnth %>% mutate(genus = algaepheno$genus[match(taxon,algaepheno$taxon)])
+chloro_chem_mnth = chloro_chem_mnth %>% mutate(genus2 = algaepheno$genus[match(taxon,algaepheno$genus)])
+chloro_chem_mnth = chloro_chem_mnth %>% mutate(genus = ifelse(is.na(genus),genus2,genus)) %>%
+  dplyr::select(-genus2)
+
+#length(chloro_chem_mnth$genus[is.na(chloro_chem_mnth$genus)])
+
+#Second try to create genus by selecting first part of taxon
+chloro_chem_mnth = chloro_chem_mnth %>% mutate(genus2=sub("\\_.*", "", taxon))
+chloro_chem_mnth = chloro_chem_mnth %>% mutate(genus = ifelse(is.na(genus),genus2,genus)) %>%
+  dplyr::select(-genus2)
+
+#length(chloro_chem_mnth$genus[is.na(chloro_chem_mnth$genus)])
+
+setdiff(genus_pheno$genus, chloro_chem_mnth$genus) # none
+
+#**************************************
+##* merge in phenotype data to datasets ----
+chloro_chem_mnth_pheno <- left_join(chloro_chem_mnth, genus_pheno, by="genus") 
+
+#check if any missing data in phenotypes
+length(chloro_chem_mnth_pheno$genus[is.na(chloro_chem_mnth_pheno$multi)])
+missing_pheno = chloro_chem_mnth_pheno[is.na(chloro_chem_mnth_pheno$multi),]
+unique(missing_pheno$taxon)
+
+#Species to add to phenotype data
+#missing_pheno = data.frame(species = unique(missing_pheno$taxon))
+#write.csv(missing_pheno, file="data/output/missing_species.csv")
+
+chloro_chem_mnth_pheno = chloro_chem_mnth_pheno %>% 
+  filter(!is.na(genus)) %>% 
+  relocate(genus, .before=taxonid) %>% 
+  relocate(prob_mucus:mucus, .before = mindepth)
+# colnames(chloro_chem_mnth_pheno)
+
+dim(chloro_chem_mnth_pheno) # 105948     97
+
+#**************************************
+## NA percentage of all variables ----
+na_percent = chloro_chem_mnth_pheno %>%
+  summarise_all(., ~mean(is.na(.)) * 100) %>%
+  pivot_longer(everything(), names_to = "variables", values_to = "na_percentage") %>%
+  arrange(na_percentage)
+
+
+#************************************************************************
+# Save data  ---- 
+#************************************************************************
+# save the data locally
+save(chloro_chem_mnth_pheno, file="data/output/mother_lake.RData")
+
+# # Justification for choosing monthly average "chloro_chem_mnth"####
+# # how many lakes in chem:
+# length(unique(chem$id)) # 10999
+# 
+# # how many lakes have both chem and chl data: 878
+# length(intersect(chem$id, chl$id)) # 878
+# 
+# # filter chem based on shared lake ids with chloro
+# shared_ids = as.integer(intersect(chem$id, chl$id))
+# chem_f = chem %>% dplyr::filter(id %in% shared_ids)
+# length(unique(chem_f$id)) # 878
+# 
+# # how many diff id_date in chem_f
+# length(unique(chem_f$id_date)) # 48961
+# 
+# # how many diff id_date in chl
+# length(unique(chl$id_date)) # 14883
+# # conclusion: much more id_dates in chem_f than in chl: chemical data collected more often than chloro data in the same location
+# 
+# # check the overlap and differences in id_dates between chem_f and chl
+# # overlap 
+# length(intersect(chem_f$id_date, chl$id_date)) # 9579
+# # how many id_date in chem_f have no corresponding id_date in chl: 39382
+# length(setdiff(chem_f$id_date,chl$id_date)) # 39382
+# # how many id_date in chl have no corresponding id_date in chem_f: 5304 
+# length(setdiff(chl$id_date,chem_f$id_date)) # 5304
+# # in conclusion: if not doing monthly averaging: only 9579 obs have both chloro and chem data
+# # how many unique id_date in chloro_chem: 14883
+# length(unique(chloro_chem$id_date)) #14883
+# # obs with both chloro and chem: 9579/14883=0.6436202
+# 
+# # try the same thing with monthly average
+# # first filter chem_mnth with lakes that also have chloro data
+# chem_mnth_f = chem_mnth %>% filter(id %in% shared_ids)
+# 
+# # check the overlap and differences in id_month between chem_mnth_f and chl_mnth
+# # overlap 
+# length(intersect(chem_mnth_f$id_yrmnth, chl_mnth$id_yrmnth)) # 10195
+# # how many id_yrmnth in chem_mnth_f have no corresponding id_yrmnth in chl_mnth: 37828
+# length(setdiff(chem_mnth_f$id_yrmnth, chl_mnth$id_yrmnth)) # 37828
+# # how many id_yrmnth in chl_mnth have no corresponding id_yrmnth in chem_mnth_f: 4389
+# length(setdiff(chl_mnth$id_yrmnth,chem_mnth_f$id_yrmnth)) # 4389
+# # conclusion: if averaging by year month, 10195 obs have both chloro and chem data
+# # how many unique id_yrmnth in chloro_chem_season: 14584
+# length(unique(chloro_chem_mnth$id_yrmnth)) #14584
+# # ratio of obs with both chloro and chem: 10195/14584 = 0.6990538
+# # ratio of obs with only chloro but no chem: 4389/14584 = 0.3009462
+# 
+# # try the same with seasonal average
+# # first filter chem_season with lakes that also have chloro data
+# chem_season_f = chem_season %>% filter(id %in% shared_ids)
+# 
+# # check the overlap and differences in id_month between chem_mnth_f and chl_mnth
+# # overlap 
+# length(intersect(chem_season_f$id_yrseason, chl_season$id_yrseason)) # 6916
+# # how many id_yrseason in chem_season_f have no corresponding id_yrseason in chl_season: 27777
+# length(setdiff(chem_season_f$id_yrseason, chl_season$id_yrseason)) # 27777
+# # how many id_yrseason in chl_season have no corresponding chem_season_f in : 3677
+# length(setdiff(chl_season$id_yrseason,chem_season_f$id_yrseason)) # 3677
+# # how many unique id_yrseason in chloro_chem_season: 10593
+# length(unique(chloro_chem_season$id_yrseason))
+# # ratio of obs with both chloro and chem: 6916/10593=0.652884
+# # ratio of obs with only chloro: 3677/10593= 0.35
+# 
+# # Conclusion: so far the best is to use monthly average: highest proportion of obs with both chloro and chem. 
+# View(chloro_chem_mnth %>% dplyr::select(id_yrmnth,id,taxon,biovol,TotP_mgL))
+
+#************************************************************************
+# END ----
+#************************************************************************
+
+

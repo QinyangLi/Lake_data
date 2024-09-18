@@ -1,0 +1,51 @@
+---
+title: "lake_data_analysis"
+format: html
+editor: visual
+---
+
+## General questions in this study
+
+1.  Are unicellular and multicellular algae ecologically differentiated?
+2.  How are unicellular and multicellular algae coexist over spatial and temporal scales.
+3.  do multicellular taxa sustain better than unicellular ones (or over larger environmental variance, temporal span and spatial span)
+
+## Specific problems to address in this study using HMSC
+
+1.  What environmental variables affect the presence of unicellular algae
+2.  What environmental variables affect the presence of multicellular algae
+3.  Are the environmental variables affect the presence of unicellular and multicellular algae different?
+4.  What environmental variables affect the abundance of unicellular algae
+5.  What environmental variables affect the abundance of multicellular algae
+6.  Are the environmental variables affect the abundance of unicellular and multicellular algae different?
+7.  Are environmental variables affecting the presence of unicellular and multicellular algae different from the environmental variables affecting the abundance of unicellular and multicellular algae.
+8.  Are the presence of unicellular and multicellular algae differ temporally over the season
+9.  Are the abundance of unicellular and multicellular algae differ temporally over the season
+10. Are the presences of unicellular and multicellular algae differ spatially over the season
+11. Are the abundances of unicellular and multicellular algae differ spatially over the season
+12. Which traits show more differentiation? (Multicellularity, mucus layer or typical cell number)
+13. Are biotic variables affecting the presence and abundance of unicellular and multicellular algae ?
+
+## Result section
+
+1.  start by describing taxa, morphology, in swedish lakes
+2.  then describe he temporal and spatial distribution of uni and multi
+
+## Summary
+
+frame intro to hypothesis: multi wider niche?: ecological expansion vs. differentiation
+
+model presence and absence first including important traits( multi, mucus, cell number)
+
+```{r}
+1 + 1
+```
+
+You can add options to executable code like this
+
+```{r}
+#| echo: false
+2 * 2
+```
+
+The `echo: false` option disables the printing of code (only output is displayed).

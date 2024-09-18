@@ -1,0 +1,638 @@
+---
+title: "Lake_data_method_v2"
+author: "Qinyang"
+date: "3/11/2022"
+output: 
+  html_document:
+    toc: true # toc: table of context # YMAL header indentation very important
+    number_sections: true
+editor_options: 
+  chunk_output_type: inline
+bibliography: /Users/qinyang/Dropbox (MEEL)/QinyangLi/Ref/ref.bib
+---
+
+# notes from V1
+ filter data and check the result sensitivity
+ check the type of maxent and interaction terms from the previous file
+ Also after checking with Jing, some data problems: 
+1. comfusing decimal with thousands data, resulting in crazy numbers in e.g si.
+2. missing Alk.Acid.mkevL which actually have quite good data completion - fixed
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+pacman::p_load(tidyr,ggplot2,stringr,cowplot,dplyr,magrittr,ggsci, readxl, viridis,swemaps, cowplot, gridExtra, PerformanceAnalytics, dendextend,ggdendro,reshape2,grid,gplots, hrbrthemes,data.table,psych,tibble,Hmisc,fuzzySim, AMR, pcaMethods,dismo,maxnet,ggpubr )
+options(encoding = "ISO-8859-1") # Change encoding to scandinavian language
+
+```
+
+# Data collection and cleaning
+
+## Lake physiochemical and green algae data
+The raw data from national lakes and watercourses monitoring scheme ran by Swedish university of agricultural sciences (SLU) were downloaded from its website (https://miljodata.slu.se/MVM/) with the following criteria. For lake physiochemical dataset (in Swedish), "Platser" (Places): [Blank]. "Provagningsmedium" (Sampling medium): "Sjö" (Lake). "Produkt" (Product): "Vattenkemi" (Water chemistry). "Parameter" (Parameter): default. For algal dataset: "Platser": [Blank]. "Provagningsmedium": "Sjö." "Produkt": "Växtplankton" (Phytoplankton). "Parameter": “Biologi" (Biology): "Chlorophyta", then click "Applicera" (Apply).  
+
+
+## Data cleaning
+Downloaded raw data were cleaned by Teodor Alling. Steps include removing redundant data, converting and unifying units resulting in 139 physiochemical variables and 9 algal biological variables such as species name, cell density, biovolume, cell minimum and maximum sizes, for each lake at each sampling time point.
+
+## Algae phenotypic data
+Algae phenotypic data were compiled by literature search. Data were primarily based on Swedish phytoplankton field guide book by [@Tikkanen & Willen (year?)] and online algal database "Algaebase" (https://algaebase.org). For the remaining algae whose information cannot be retrieved from the above two sources, I conducted literature searches based on primary publication or other field guides describing their phenotype. Parameters include names of species, genera, family and order, typical cell number, cell size, colony size, presence of mucus layer, pyrinoid, eye spot, reproductive mode, etc. Algae with a typical cell number equal or greater than 4, or being described as filamentous, were classified as multicellular and others unicellular.  
+
+## Creating the full dataset
+The final dataset were created by merging the physiochemical, algal and algae-phenotypic datasets. Each row represents the presence of an algal species and its phynotypic traits and abundances (cell density and biovolume) in a given sampling station along with its physiochemical conditions on a given day.  
+
+## Visualise dataset on the map
+Figure 1. Sampling frequency, duration, percentage of multicellular genera of each lake
+```{r, echo=FALSE}
+load("../RData_files/mother_lake.RData")
+lake <- mother_lake
+
+View(lake)
+# make frequency variable
+lake_freq <- lake %>%  group_by(id) %>% summarise(n = n()) 
+lake_freq <- lake_freq %>% rename(sample_count = n) %>% left_join(lake, lake_freq, by = "id")
+# dim(lake_freq) 
+# make sampling span variable
+lake_span <- lake %>%  group_by(id) %>% summarise(m = max(year)-min(year)) 
+lake_span <- lake_span %>% rename(year_span = m) %>% left_join(lake, lake_span, by = "id")
+
+# sampling frequency
+station_coor <- lake_freq %>% group_by(id) %>% 
+  summarise(north = mean(latitude,na.rm=T), east = mean(longitude, na.rm=T), sample_count = sample_count) %>%  unique() # %>% filter(sample_count > 400)
+  
+site_map_freq <- ggplot(data = map_ln, aes(x = ggplot_long, y = ggplot_lat), color = "red") + 
+  geom_polygon(aes(group = group), fill="grey85") +
+  coord_fixed(0.7) +
+  geom_point(data = station_coor, aes(x = east, y = north, color = sample_count),  size = 0.6, alpha = 0.9) +
+  scale_color_viridis(option = "A", direction=-1)+
+  # scale_alpha_continuous(range = c(1, 9734))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(),  axis.line = , axis.text = element_blank(),
+        axis.ticks = element_blank())+
+  ylab(NULL)+
+  xlab(NULL)
+
+# Sampling time span
+station_coor_span <- lake_span %>% group_by(id) %>% 
+  summarise(north = mean(latitude,na.rm=T), east = mean(longitude, na.rm=T), year_span = year_span) %>%  unique() 
+
+site_map_span <- ggplot(data = map_ln, aes(x = ggplot_long, y = ggplot_lat), color = "red") + 
+  geom_polygon(aes(group = group), fill="grey85") +
+  coord_fixed(0.7) +
+  geom_point(data = station_coor_span, aes(x = east, y = north, color = year_span),  size = 0.6, alpha = 0.9) +  
+  scale_color_viridis(option = "E", direction=-1)+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(),  axis.line = , axis.text = element_blank(),
+        axis.ticks = element_blank())+
+  ylab(NULL)+
+  xlab(NULL)
+
+# calculate percentage of multicell genera in a given lake: (n multi genera/ n total genera)
+lake_multi_per <- lake %>% dplyr::group_by(id,genus,multicell) %>% 
+  dplyr::summarise(n = n()) %>% group_by(id) %>% mutate(n=n()) %>% add_count(m=(multicell=="t")) %>% filter(m==T) %>% group_by(id) %>% 
+  summarise(per_multi = nn/n) %>% distinct()
+
+#   
+station_coor_multi <-  left_join(lake_span, lake_multi_per, by="id")
+station_coor_multi_2 <- station_coor_multi %>% group_by(id) %>% 
+  summarise(north = mean(latitude,na.rm=T), east = mean(longitude, na.rm=T), multi = per_multi) %>%  unique()
+
+site_map_multi <- ggplot(data = map_ln, aes(x = ggplot_long, y = ggplot_lat)) + 
+  geom_polygon(aes(group = group), fill="grey85") +
+  coord_fixed(0.7) +
+  geom_point(data = station_coor_multi_2, aes(x = east, y = north, color = multi),  size = 0.6, alpha = 0.9) +
+  scale_color_viridis(option = "E", direction=-1)+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(),  axis.line = , axis.text = element_blank(),
+        axis.ticks = element_blank())+
+  ylab(NULL)+
+  xlab(NULL)
+
+# plot the two figures side by side  
+grid.arrange(site_map_freq, site_map_span, site_map_multi, ncol=3)
+```
+
+# Pre-analysis data processing
+
+Eleven environmental variables were priliminary chosen based on their completeness, i.e. the top 10 variables in Table 1 including "vattentemperatur" (water temperature), "syrgasmgl" (dissolved oxygen in mg/L), "totpmgl" (total phosphorus in mg/L), "ph", "no2no3mgl" (nitrite and nitrate in mg/L), "nh4mgl" (ammonium in mg/L), "po4mgl" (phosphate in mg/L), "kond25msm" (conductivity at 25 °C), "absf420..5cm." (absorbance of filtered water at 420nm), "tocmgl" (total organic carbon in mg/L) and "simgl" (silicon in mg/L).  
+
+The chosen variables were then inspected on their distribution and log-transformed accordingly, and finally variables were scaled with means equal to 0 using the scale function.
+
+
+## Data completeness in each variable
+Table 1. Top 20 most complete physiochemical variables  
+```{r, echo=FALSE}
+load("../RData_files/lake.RData")
+lake_chem <- lake %>% dplyr::select("absf254..5cm.":"znmgl")
+percent_na <- as.data.frame(apply(lake_chem, 2, function(col)(1-sum(is.na(col))/length(col))))
+colnames(percent_na) <- "completeness"
+percent_na <- tibble::rownames_to_column(percent_na, "variables")
+percent_na_top_20<-head(percent_na[order(percent_na$completeness,decreasing=T), ], 20)
+percent_na_top_20
+hist(c(lake$totnpsmgl/lake$totpmgl), breaks=1000)
+range(c(lake$totnpsmgl/lake$totpmgl), na.rm=T)
+summary(c(lake$totnpsmgl/lake$totpmgl))
+quantile(c(lake$totnpsmgl/lake$totpmgl), c(.002, .95), na.rm=T) 
+summary(c(lake$totnpsmgl/lake$totpmgl))
+# 
+```
+
+Table 2. correlation matrix of the top 11 variables
+```{r, echo=FALSE}
+names<- percent_na_top_20$variables
+lake_chem_top_11 <- lake_chem %>% dplyr::select(names[1:11])
+chem_corr <- rcorr(as.matrix(lake_chem_top_11))
+# format(round(chem_corr[[1]], 2), nsmall = 2)
+format(round(chem_corr[[1]], 2), nsmall = 2)
+```
+
+## Data transformation and scaling on selected environmental variables
+### raw data visualisation
+```{r, echo=FALSE, error=TRUE}
+top_11 <- names(lake_chem_top_11)
+env_vars <- lake %>% dplyr::select("id","year","month","day","longitude","latitude",top_11)
+env_vars_long <- env_vars %>% pivot_longer(!id&!year&!month&!day&!longitude&!latitude, names_to="type", values_to="count")
+
+raw_env_plot <- ggplot(env_vars_long, aes(x=count, color=type, fill=type)) +
+  geom_histogram(bins = 500) +
+  scale_fill_viridis(discrete=TRUE) +
+  scale_color_viridis(discrete=TRUE) +
+  theme_ipsum() +
+  theme(
+    legend.position="none",
+    panel.spacing = unit(0.1, "lines"),
+    strip.text.x = element_text(size = 8),
+    panel.grid.major = element_blank(), 
+    panel.grid.minor = element_blank(),
+  )  +
+  facet_wrap(~type, scales = "free")
+raw_env_plot
+
+# since pairs.panel cannot handle my full dataset, make a subset containing about randomly chosen 10% of full data
+# dim(env_vars)
+env_vars_dt <- data.table(env_vars)
+env_vars_sample <- env_vars_dt[sample(.N, 30000)]
+
+dat<-env_vars_sample[,c("vattentemperatur..c.","syrgasmgl","totpmgl","ph","no2no3mgl","nh4mgl","po4mgl","kond25msm","absf420..5cm.","tocmgl","simgl")]
+pairs.panels(dat,
+             smooth = FALSE, # If TRUE, draws loess smooths
+             scale = FALSE, # If TRUE, scales the correlation text font
+             density = FALSE, # If TRUE, adds density plots and histograms
+             ellipses = FALSE, # If TRUE, draws ellipses
+             method = "pearson", # Correlation method (also "spearman" or "kendall")
+             pch = 19, # pch symbol
+             lm = TRUE, # If TRUE, plots linear fit rather than the LOESS (smoothed) fit
+             cor = TRUE, # If TRUE, reports correlations
+             jiggle = FALSE, # If TRUE, data points are jittered
+             factor = 2, # Jittering factor
+             hist.col = 4, # Histograms color
+             stars = TRUE, # If TRUE, adds significance level with stars
+             ci = TRUE) # If TRUE, adds confidence intervals
+
+```
+
+### log-transformation
+Prior to log-transformation, zeros in variables were manually changed to the next smallest value. There are 60 0s in ammonium, 2426 0s in dissolved oxygen, 81 0s in silicon, 118 0s in phosphate and 5 0s in absorbance, corresponding to 0.003% (60/200195), 1% (2426/232120), 0.05% (81/176601), 0.06% (118/197077) and 0.003% (5/192587) of all the non-NA values respectively.  
+In the variable silicon, there are 104 values 0.06% (104/176601) that are of around three magnitude larger than the rest of the values, possibly resulted in formatting confusion between decimal points "," and thousands separator ",", therefore those values were also manually removed.
+```{r, echo=FALSE}
+# nh4 has 60 zeros, oxygen has 2426 zeros, si have 81 0s, po4 118 0s
+env_vars$nh4mgl[env_vars$nh4mgl == 0] <- 0.00022
+env_vars$syrgasmgl[env_vars$syrgasmgl == 0 ] <- 0.001
+env_vars$simgl[env_vars$simgl == 0 ] <- 0.01
+env_vars$simgl[env_vars$simgl > 21] <- NA
+env_vars$po4mgl[env_vars$po4mgl == 0 ] <- 5e-04
+env_vars$absf420..5cm.[env_vars$absf420..5cm. == 0 ] <- 0.001
+# length(na.omit(env_vars$absf420..5cm.)) 
+# table(env_vars$simgl) 
+
+env_vars_trans <- env_vars %>% mutate(nh4 = log(nh4mgl), no2no3 = log(no2no3mgl),toc = tocmgl, oxygen = log(syrgasmgl), totp = log(totpmgl), temp =vattentemperatur..c., ph = ph, si=log(simgl), po4=log(po4mgl),conductivity=log(kond25msm), abs=log(absf420..5cm.)) %>% dplyr::select(-c(7:9,11:17))
+#View(env_vars_trans)
+env_vars_trans_long <- env_vars_trans %>% pivot_longer(!id&!year&!month&!day&!longitude&!latitude, names_to="type", values_to="count")
+
+ggplot(env_vars_trans_long, aes(x=count, color=type, fill=type)) +
+  geom_histogram(bins = 1000) +
+  scale_fill_viridis(discrete=TRUE) +
+  scale_color_viridis(discrete=TRUE) +
+  theme_ipsum() +
+  theme(
+    legend.position="none",
+    panel.spacing = unit(0.1, "lines"),
+    strip.text.x = element_text(size = 8),
+    panel.grid.major = element_blank(), 
+    panel.grid.minor = element_blank(),
+  )  +
+  facet_wrap(~type, scales = "free")
+```
+
+### scale
+
+```{r, echo=FALSE, error=TRUE}
+env_vars_scal <- scale(env_vars_trans[, c(7:17)])
+env_vars_scal <- cbind(env_vars[,c(1:6)], env_vars_scal)
+env_vars_scal_long <- env_vars_scal %>% pivot_longer(!id&!year&!month&!day&!longitude&!latitude, names_to="type", values_to="count")
+
+ggplot(env_vars_scal_long, aes(x=count, color=type, fill=type)) +
+  geom_histogram(bins = 1000) +
+  scale_fill_viridis(discrete=TRUE) +
+  scale_color_viridis(discrete=TRUE) +
+  theme_ipsum() +
+  theme(
+    legend.position="none",
+    panel.spacing = unit(0.1, "lines"),
+    strip.text.x = element_text(size = 8),
+    panel.grid.major = element_blank(), 
+    panel.grid.minor = element_blank(),
+  )  +
+  facet_wrap(~type, scales = "free")
+
+env_vars_scal <- data.table(env_vars_scal)
+env_vars_scal_sample <- env_vars_scal[sample(.N, 30000)]
+
+dat_scal<-env_vars_scal_sample[,c(7:17)]
+pairs.panels(dat_scal,
+             smooth = FALSE, # If TRUE, draws loess smooths
+             scale = FALSE, # If TRUE, scales the correlation text font
+             density = FALSE, # If TRUE, adds density plots and histograms
+             ellipses = FALSE, # If TRUE, draws ellipses
+             method = "pearson", # Correlation method (also "spearman" or "kendall")
+             pch = 19, # pch symbol
+             lm = TRUE, # If TRUE, plots linear fit rather than the LOESS (smoothed) fit
+             cor = TRUE, # If TRUE, reports correlations
+             jiggle = FALSE, # If TRUE, data points are jittered
+             factor = 2, # Jittering factor
+             hist.col = 4, # Histograms color
+             stars = TRUE, # If TRUE, adds significance level with stars
+             ci = TRUE) # If TRUE, adds confidence intervals
+
+```
+
+## Summarise data into genus level
+Analysis were done on genus level, biovolume of genus is the average value of all species biovolume data.
+```{r, echo=FALSE}
+lake$nh4mgl[lake$nh4mgl == 0] <- 0.00022
+lake$syrgasmgl[lake$syrgasmgl == 0 ] <- 0.001
+lake$simgl[lake$simgl == 0 ] <- 0.01
+lake$simgl[lake$simgl > 21] <- NA
+lake$po4mgl[lake$po4mgl == 0 ] <- 5e-04
+lake$absf420..5cm.[lake$absf420..5cm. == 0 ] <- 0.001
+lake_env_genus <- lake %>% distinct() %>% 
+  dplyr::select("id","year","month","day","longitude","latitude",top_11,"genus","biovolym.mm3.l.") %>% 
+  mutate(time = paste(year, month, day, sep = ""), nh4 = scale(log(nh4mgl)), no2no3 = scale(log(no2no3mgl)),toc = scale(tocmgl),oxygen = scale(log(syrgasmgl)), totp = scale(log(totpmgl)), temp =scale(vattentemperatur..c.), ph = scale(ph),
+         si =scale(log(simgl)), conductivity=scale(log(kond25msm)), abs=scale(log(absf420..5cm.)), po4=scale(log(po4mgl))) %>% 
+  group_by(time,genus) %>% mutate(ave_biovol = mean(biovolym.mm3.l.)) %>% 
+  dplyr::select(-biovolym.mm3.l.) %>% distinct() %>% 
+  pivot_wider(names_from=genus, values_from=ave_biovol,values_fill=NA) %>% dplyr::select(-c(7:9,11:17)) 
+# dim(lake_env_genus) # 38064 134
+# lake_env_genus$time <- as.numeric(lake_env_genus$time)
+# head(lake_env_genus)
+```
+
+## PCA based missing data imputation 
+Missing data were imputed using funcion *bpca* in package pcaMethods.
+```{r, echo=FALSE}
+identifier <- as.numeric(paste(lake_env_genus$id,lake_env_genus$time, sep=""))
+# prepare the env variables  to the correct matrix format
+lake_env_matrix <- cbind(lake_env_genus[, c(7, 9:18)], identifier)
+# dim(lake_env_matrix)
+lake_env_matrix <- matrix(unlist(lake_env_matrix), ncol = 12)
+## compare the correlation structure of env variables without NAs and with NAs imputated
+# pca with all NAs deleted
+lake_env_matrix_no_na <- na.omit((lake_env_matrix[,c(1:12)]))
+# dim(lake_env_matrix_no_na) # 14204    12
+colnames(lake_env_matrix_no_na) <- c("ph","nh4","no2no3", "toc", "oxygen",
+                                     "totp","temp", "si", "conductivity","abs","po4", "identifier")
+pca_1 <- princomp(lake_env_matrix_no_na[,c(1:11)], cor = T) 
+pca_plot_non_na <- ggplot_pca(
+  pca_1,
+  choices = 1:2,
+  scale = 1,
+  pc.biplot = TRUE,
+  labels = NULL,
+  labels_textsize = 3,
+  labels_text_placement = 2.5,
+  ellipse = TRUE,
+  ellipse_prob = 0.68,
+  ellipse_size = 0.5,
+  ellipse_alpha = 0.5,
+  points_size = 2,
+  points_alpha = 0.15,
+  arrows = TRUE,
+  arrows_colour = "tomato",
+  arrows_size = 1,
+  arrows_textsize = 4,
+  arrows_textangled = TRUE,
+  arrows_alpha = 0.75,
+  base_textsize = 10,
+)
+
+# pca with all NAs imputed
+# NA imputation with method bpca in pca function in package pcaMethod
+result <- pca(lake_env_matrix, method="bpca", nPcs=2, seed=123)
+lake_env_matrix_imputed <- completeObs(result)
+colnames(lake_env_matrix_imputed) <- c("ph","nh4","no2no3", "toc", "oxygen", "totp","temp", "si",
+                            "conductivity","abs","po4", "identifier")
+
+pca_2 <- princomp(lake_env_matrix_imputed[,c(1:11)], cor = T)
+pca_plot_imputed <- ggplot_pca(
+  pca_2,
+  choices = 1:2,
+  scale = 1,
+  pc.biplot = TRUE,
+  labels = NULL,
+  labels_textsize = 3,
+  labels_text_placement = 2.5,
+  ellipse = TRUE,
+  ellipse_prob = 0.68,
+  ellipse_size = 0.5,
+  ellipse_alpha = 0.5,
+  points_size = 2,
+  points_alpha = 0.15,
+  arrows = TRUE,
+  arrows_colour = "deep sky blue",
+  arrows_size = 1,
+  arrows_textsize = 4,
+  arrows_textangled = TRUE,
+  arrows_alpha = 0.75,
+  base_textsize = 10,
+)
+
+# pca_plot_non_na
+# pca_plot_imputed
+ggarrange(pca_plot_non_na, pca_plot_imputed)
+
+# replace na with imputed data
+# dim(lake_env_matrix_imputed)
+# dim(lake_env_genus[,c(1:6, 19:134)])
+lake_env_matrix_imputed <- as.data.frame(lake_env_matrix_imputed)
+#lake_env_matrix_imputed$identifier <- as.character(lake_env_matrix_imputed$identifier)
+#dim(lake_env_matrix_imputed)
+lake_env_genus$identifier <- as.character(paste(lake_env_genus$id,lake_env_genus$time, sep=""))
+
+lake_env_genus_full <- cbind(lake_env_genus[,c(1:6, 19:134)], lake_env_matrix_imputed) 
+
+# relocate cols
+lake_env_genus_full <- relocate(lake_env_genus_full, ph:identifier, .after = latitude)
+lake_env_genus_full <- relocate(lake_env_genus_full, identifier, .before = ph)
+```
+
+# Maxent modelling - na.omit
+In the first Maxent modelling I removed all lakes containing NAs resulting in a 14208 (row) * 12 (column) dataset. 
+## converting to presence/absence
+```{r, echo=FALSE}
+# lake_env_matrix_no_na <- na.omit(as.data.frame(lake_env_matrix))
+# dim(lake_env_matrix_no_na) # 14204    12
+lake_env_genus$identifier <- as.numeric(lake_env_genus$identifier)
+lake_env_matrix_no_na <- as.data.frame(lake_env_matrix_no_na)
+# lake_env_matrix_no_na <- as.character(lake_env_matrix_no_na$identifier)
+# str(lake_env_matrix_no_na)
+# not sure why left_join created lots of duplicates, hence the distinct()
+presence <- left_join(lake_env_matrix_no_na, lake_env_genus[,c(1:6, 19:135)], by="identifier",
+                       keep = F) %>% distinct()
+presence <- relocate(presence, identifier:latitude, .before = ph)
+presence <- presence %>% mutate_at(c(19:134), ~replace(., !is.na(.), 1)) %>%  mutate_at(c(19:134), ~replace(., is.na(.), 0)) 
+#View(presence)
+```
+
+## filter out the genera with too little presence
+According to [@stoa2019] > 15 occurrence gives really good model fitting, so remove all the genera with occurence < 15
+```{r,echo=FALSE}
+# check how many presence per genus per lake
+presence_f <- presence %>% group_by(id) %>% dplyr::select(id,Choricystis:Neocystis) %>% summarise(across(c(Choricystis:Neocystis), sum)) %>%
+mutate_at(c(2:117), ~as.integer(. !=0)) %>%  # this code changes all the non-0s into 1
+summarise(across(c(Choricystis:Neocystis), sum)) %>% mutate_all(~as.numeric(.)) 
+
+col_names <- names(presence_f[colSums(presence_f>15)>0])
+# class(presence_f)
+# dim(presence_f)
+```
+
+
+
+## modelling
+### create a proportional measure of percentages of multicell species within a genus
+Dataset were run in maxent, each genus' presence and absence record is modelled by the selected environmental variables. The relative contribution of each variable on each genera were plotted in the figure. 
+```{r,echo=FALSE, error=TRUE}
+# # maxent modelling ####
+load("../RData_files/maxent_outputs.RData")
+# maxent_outputs <- vector(mode="list", length = 116)
+# for (i in 1:116) {
+#   maxent_outputs[[i]] <- maxent(x = presence[ , 8:18], p = presence[,i+18])
+# }
+# maxent_outputs[[3]]@results
+# save(maxent_outputs, file = "../RData_files/maxent_outputs.RData")
+# # extract relative contribution from models####
+maxent_result_table <- data.frame(matrix(NA, nrow=102,ncol = 12))
+for (i in 1:102) {
+  maxent_result_table[i,] <- maxent_outputs[[i]]@results[c(5,7:17)]
+}
+
+genus_names <- names(presence[, c(19:120)])
+maxent_result_table$genus <- genus_names
+# maxent_result_table
+colnames(maxent_result_table) <- c("AUC","abs","conductivity","nh4","no2no3","oxygen","ph","po4","si","temp","toc","totp","genus")
+maxent_result_table <- maxent_result_table %>% dplyr::select("genus", everything())
+maxent_result_table <- relocate(maxent_result_table, genus, .before = AUC)
+
+```
+
+## plot mean relative contribution of variables by uni vs. multi
+```{r,echo=FALSE, error=TRUE}
+cell <- lake %>% dplyr::select("genus","multicell") %>% group_by(genus) %>% distinct()
+# dim(cell)
+cell$multicell[cell$multicell !="f"] <- T
+cell$multicell[cell$multicell =="f"] <- F
+# 3 genera have both uni and multi algae:
+cellular <- as.data.frame(table(cell)) # Ankistrodesmus multi, Oocystis multi, Stichococcus, multi
+unicell <- cellular %>% filter(multicell == FALSE & Freq !=0)
+multicell <- cellular %>% filter(multicell == TRUE & Freq !=0)
+cell_type <- rbind(unicell, multicell)
+# Here I manually classify Ankistrodesmus and Oocystis as multi and Stichococcus as uni
+cell_type <- cell_type[c(-2,-31, -104),]
+# dim(cell_type)
+maxent_result_table_celltype <- left_join(maxent_result_table,cell_type[,1:2], by="genus" )[-7,]
+# View(maxent_result_table_celltype)
+# remove Selenastraceae (not genus?)
+maxent_result_table_celltype <- maxent_result_table_celltype[-104,]
+maxent_result_table_celltype_long <- maxent_result_table_celltype[,c(1,3:14)] %>% 
+  pivot_longer(!genus &!multicell, names_to = "env_variables", values_to = "value")
+# plot relative contribution of env variables mean, error bar and jitter ####
+# First make a summary dataset with means and sd
+maxent_result_table_celltype_long_summary <- maxent_result_table_celltype_long %>%
+  group_by(env_variables, multicell) %>%
+  summarise(sd = sd(value), value = mean(value))
+maxent_result_table_celltype_long_summary$env_variables
+ggplot(maxent_result_table_celltype_long, aes(x=env_variables, y=value, color = multicell)) +
+  geom_jitter(position = position_jitter(0.3)) + 
+  geom_line(aes(group = multicell),data = maxent_result_table_celltype_long_summary) +
+  geom_errorbar(aes(ymin = value-sd, ymax = value+sd), data = maxent_result_table_celltype_long_summary, width = 0.2)+
+  scale_color_manual(values = c("#00AFBB", "#E7B800")) +
+  theme(legend.position = "top", panel.background = element_blank())
+```
+
+
+# Maxent modelling - na imputed
+```{r,echo=FALSE}
+presence_nafill <- lake_env_genus_full %>% mutate_at(c(19:134), ~replace(., !is.na(.), 1)) %>%  mutate_at(c(16:131), ~replace(., is.na(.), 0)) 
+# dim(lake_env_genus_full)
+```
+
+## modelling - na imputed
+```{r,echo=FALSE}
+load("../RData_files/maxent_outputs_nafill.RData")
+# maxent_outputs_nafill <- vector(mode="list", length = 116)
+# for (i in 1:116) {
+#   maxent_outputs_nafill[[i]] <- maxent(x = presence_nafill[ , 8:18], p = presence_nafill[,i+18])
+# }
+# # maxent_outputs[[3]]@results
+# save(maxent_outputs_nafill, file = "../RData_files/maxent_outputs_nafill.RData")
+# # extract relative contribution from models####
+maxent_result_table_nafill <- data.frame(matrix(NA, nrow=113,ncol = 12))
+for (i in 1:113) {
+  maxent_result_table_nafill[i,] <- maxent_outputs_nafill[[i]]@results[c(5,7:17)]
+}
+# View(maxent_outputs_nafill)
+genus_names_nafill <- names(presence[, c(19:131)])
+maxent_result_table_nafill$genus <- genus_names_nafill
+# maxent_result_table
+colnames(maxent_result_table_nafill) <- c("AUC","abs","conductivity","nh4","no2no3","oxygen","ph","po4","si","temp","toc","totp","genus")
+maxent_result_table <- maxent_result_table %>% dplyr::select("genus", everything())
+maxent_result_table_nafill <- relocate(maxent_result_table_nafill, genus, .before = AUC)
+
+```
+
+
+```{r, echo=FALSE}
+maxent_result_table_celltype_nafill <- left_join(maxent_result_table_nafill,cell_type[,1:2], by="genus" )[-7,]
+# remove Selenastraceae (not genus?)
+maxent_result_table_celltype_nafill <- maxent_result_table_celltype_nafill[-104,]
+# View(maxent_result_table_celltype_nafill)
+maxent_result_table_celltype_nafill_long <- maxent_result_table_celltype_nafill[,c(1,3:14)] %>% 
+  pivot_longer(!genus &!multicell, names_to = "env_variables", values_to = "value")
+
+maxent_result_table_celltype_nafill_long_summary <- maxent_result_table_celltype_nafill_long %>%
+  group_by(env_variables, multicell) %>%
+  summarise(
+    sd = sd(value),
+    value = mean(value)
+  )
+
+ggplot(maxent_result_table_celltype_nafill_long, aes(x=env_variables, y=value, color = multicell)) +
+  geom_jitter(position = position_jitter(0.3)) + 
+  geom_line(aes(group = multicell),data = maxent_result_table_celltype_nafill_long_summary) +
+  geom_errorbar(aes(ymin = value-sd, ymax = value+sd), data = maxent_result_table_celltype_long_summary, width = 0.2)+
+  scale_color_manual(values = c("#00AFBB", "#E7B800")) +
+  theme(legend.position = "top",panel.grid.major = element_blank(),panel.grid.minor = element_blank(), panel.background = element_blank())
+
+```
+
+# Maxent modelling - average
+```{r,echo=FALSE}
+# take median value of summer env variables per lake, then convert algae to presence
+lake_env_genus_ave_pre_1 <- lake_env_genus %>% filter(month==6 |month==7 |month==8) %>% 
+  dplyr::select(-time) %>% group_by(id) %>%
+  summarise(across("ph":"Neocystis", ~ median(., na.rm=T,  .names = "{.col}"))) %>%
+  mutate(across("Choricystis":"Neocystis", ~replace(., !is.na(.), 1))) %>%
+  mutate(across("Choricystis":"Neocystis", ~replace(., is.na(.), 0)))
+
+# filter out occurrence less than 15 lakes
+names <- names(lake_env_genus_ave_pre_1[, c(13:128)][,colSums(lake_env_genus_ave_pre_1[, c(13:128)])>15])
+
+lake_env_genus_ave_pre <- lake_env_genus_ave_pre_1 %>% dplyr::select(c(1:12,names))
+# dim(lake_env_genus_ave_pre)
+lake_env_genus_ave_pre_naomit <- na.omit(lake_env_genus_ave_pre)
+```
+
+
+## modelling - ave
+```{r,echo=FALSE,results = FALSE}
+#dim(lake_env_genus_ave_pre_naomit) # 276  87
+maxent_outputs_ave <- vector(mode="list", length = 75) # 75 = 87 - 12 ( 11 env variables + lake id)
+for (i in 1:75) {
+  maxent_outputs_ave[[i]] <- maxent(x = lake_env_genus_ave_pre_naomit[ , 2:12], p = lake_env_genus_ave_pre_naomit[,i+12])
+}
+# maxent_outputs[[3]]@results
+# save(maxent_outputs_ave, file = "../RData_files/maxent_outputs_ave.RData")
+# extract relative contribution from models####
+maxent_result_table_ave <- data.frame(matrix(NA, nrow=75,ncol = 12))
+for (i in 1:75) {
+  maxent_result_table_ave[i,] <- maxent_outputs_ave[[i]]@results[c(5,7:17)]
+}
+# View(maxent_outputs_nafill)
+genus_names_ave <- names(lake_env_genus_ave_pre_naomit[, c(13:87)])
+maxent_result_table_ave$genus <- genus_names_ave
+# maxent_result_table
+colnames(maxent_result_table_ave) <- c("AUC","abs","conductivity","nh4","no2no3","oxygen","ph","po4","si","temp","toc","totp","genus")
+maxent_result_table_ave <- maxent_result_table_ave %>% dplyr::select("genus", everything())
+maxent_result_table_ave <- relocate(maxent_result_table_ave, genus, .before = AUC)
+
+
+
+### maxent tutorial code###
+# Split occurrence data into training & testing
+# set.seed(2)
+# 
+# # randomly select 50% for training
+# Choricystis <- lake_env_genus_ave_pre_naomit[, 2:13]
+# selected <- sample(1:nrow(Choricystis), nrow(Choricystis) * 0.5)
+# Choricystis_train <- Choricystis[selected,]
+# Choricystis_test <- Choricystis[-selected,]
+# 
+# # extracting env conditions for training occ from the raster
+# # stack; a data frame is returned (i.e multiple columns)
+# p <- Choricystis_train[, 1:11]
+# # env conditions for testing occ
+# p_test <- Choricystis_test[, 1:11]
+# # extracting env conditions for background
+# a <- Choricystis %>% filter(Choricystis==0)
+# 
+# # repeat the number 1 as many numbers as the number of rows
+# # in p, and repeat 0 as the rows of background points
+# pa <- c(rep(1, nrow(p)), rep(0, nrow(a)))
+# 
+# pder <- as.data.frame(rbind(p, a))
+###
+
+```
+
+```{r, echo=FALSE}
+maxent_result_table_celltype_ave <- left_join(maxent_result_table_ave,cell_type[,1:2], by="genus" )[-7,]
+# remove Selenastraceae (not genus?)
+# View(maxent_result_table_celltype_nafill)
+maxent_result_table_celltype_ave_long <- maxent_result_table_celltype_ave[,c(1,3:14)] %>% 
+  pivot_longer(!genus &!multicell, names_to = "env_variables", values_to = "value")
+
+maxent_result_table_celltype_ave_long_summary <- maxent_result_table_celltype_ave_long %>%
+  group_by(env_variables, multicell) %>%
+  summarise(
+    sd = sd(value),
+    value = mean(value)
+  )
+
+ggplot(maxent_result_table_celltype_ave_long, aes(x=env_variables, y=value, color = multicell)) +
+  geom_jitter(position = position_jitter(0.3)) + 
+  geom_line(aes(group = multicell),data = maxent_result_table_celltype_ave_long_summary) +
+  geom_errorbar(aes(ymin = value-sd, ymax = value+sd), data = maxent_result_table_celltype_ave_long_summary, width = 0.2)+
+  scale_color_manual(values = c("#00AFBB", "#E7B800")) +
+  theme(legend.position = "top",panel.grid.major = element_blank(),panel.grid.minor = element_blank(), panel.background = element_blank())
+
+
+# jitter size change examples 
+# ggplot(data=ecoldf2,aes(x=Predator,y=SGR,fill=t14Presence_LG))+
+#   #geom_boxplot(width=0.2,outlier.colour = "white",position=position_dodge(width = 0.4))+
+#   geom_jitter(position=position_jitterdodge(jitter.width =0.1,dodge.width = 0.4),shape=21, size=2,alpha=0.8)+
+#   geom_pointrange(position=position_dodge(width = 0.4),data = a_sum, aes(x = Predator, y = mean, ymin = lcl, ymax = ucl),fatten = 8,size=1.2,shape=21,alpha=0.5) +
+#   ylab("Algae growth rate per day")+
+#   xlab("Predation")+
+#   labs(title = "",fill="Multicellular groups")+
+#   scale_colour_manual(values=multicols,name ="")+
+#   scale_fill_manual(values=multicols,name ="")+t1
+
+```
+
+
+
+## incorporate refs in the markdown file
+square bracket and write list of names and year [@young2016;@yoshida2003]
+
+# References
+Miljödata-MVM [yyyy]. Swedish University of Agricultural Sciences (SLU). National data host lakes and watercourses, and national data host agricultural land, https://miljodata.slu.se/mvm/ [yyyy-mm-dd or dd/mm/yyyy].
+
+
+
